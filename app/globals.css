@@ -1,0 +1,205 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 47.4% 11.2%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 47.4% 11.2%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 47.4% 11.2%;
+
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+
+    --sidebar: 210 40% 98%;
+    --sidebar-foreground: 222.2 47.4% 11.2%;
+    --sidebar-accent: 210 40% 94%;
+
+    --radius: 0.6rem;
+  }
+
+  .dark {
+    --background: 222.2 47.4% 7%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 47.4% 9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 47.4% 9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 50.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 48%;
+
+    --sidebar: 222.2 47.4% 5%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-accent: 217.2 32.6% 14%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer components {
+  /* Markdown prose styling (used by MarkdownRenderer). */
+  .markdown-body {
+    @apply text-[0.95rem] leading-7;
+  }
+
+  .markdown-body > *:first-child {
+    @apply mt-0;
+  }
+
+  .markdown-body > *:last-child {
+    @apply mb-0;
+  }
+
+  .markdown-body h1 {
+    @apply mt-6 mb-3 text-2xl font-semibold tracking-tight;
+  }
+
+  .markdown-body h2 {
+    @apply mt-5 mb-2 text-xl font-semibold tracking-tight;
+  }
+
+  .markdown-body h3 {
+    @apply mt-4 mb-2 text-base font-semibold;
+  }
+
+  .markdown-body p {
+    @apply my-3;
+  }
+
+  .markdown-body ul {
+    @apply my-3 list-disc space-y-1 pl-6;
+  }
+
+  .markdown-body ol {
+    @apply my-3 list-decimal space-y-1 pl-6;
+  }
+
+  .markdown-body a {
+    @apply text-primary underline underline-offset-2 hover:opacity-80;
+  }
+
+  .markdown-body blockquote {
+    @apply my-3 border-l-2 border-border pl-4 italic text-muted-foreground;
+  }
+
+  .markdown-body table {
+    @apply my-4 w-full border-collapse text-sm;
+  }
+
+  .markdown-body th,
+  .markdown-body td {
+    @apply border border-border px-3 py-1.5 text-left align-top;
+  }
+
+  .markdown-body th {
+    @apply bg-muted font-semibold;
+  }
+
+  /* Inline code (not inside pre). */
+  .markdown-body :not(pre) > code {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em];
+  }
+
+  .markdown-body pre {
+    @apply my-4 overflow-x-auto rounded-lg border border-border bg-[#0d1117] p-4 text-sm;
+  }
+
+  .markdown-body pre code {
+    @apply font-mono text-[0.85rem] leading-6;
+  }
+
+  /* KaTeX display blocks scroll on overflow instead of breaking layout. */
+  .markdown-body .katex-display {
+    @apply my-4 overflow-x-auto overflow-y-hidden py-1;
+  }
+
+  /* Minimal highlight.js token theme (dark) — avoids importing transitive CSS. */
+  .hljs {
+    @apply text-[#c9d1d9];
+  }
+  .hljs-comment,
+  .hljs-quote {
+    @apply text-[#8b949e] italic;
+  }
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-literal,
+  .hljs-type {
+    @apply text-[#ff7b72];
+  }
+  .hljs-string,
+  .hljs-attr,
+  .hljs-template-tag,
+  .hljs-addition {
+    @apply text-[#a5d6ff];
+  }
+  .hljs-number,
+  .hljs-symbol,
+  .hljs-bullet {
+    @apply text-[#79c0ff];
+  }
+  .hljs-title,
+  .hljs-name,
+  .hljs-section,
+  .hljs-function {
+    @apply text-[#d2a8ff];
+  }
+  .hljs-built_in,
+  .hljs-variable,
+  .hljs-template-variable {
+    @apply text-[#ffa657];
+  }
+  .hljs-meta,
+  .hljs-deletion {
+    @apply text-[#ff7b72];
+  }
+}
