@@ -17,6 +17,10 @@ interface MarkdownRendererProps {
 /**
  * Render assistant/user Markdown with GFM tables, LaTeX (KaTeX), and
  * syntax-highlighted code. Streaming-safe: partial Markdown renders fine.
+ *
+ * Note: `detect` is explicitly disabled — highlighting only runs when a fenced
+ * block declares an explicit `language-*` hint, skipping highlight.js
+ * auto-detection on every block (a significant per-token streaming cost).
  */
 export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
   const components = React.useMemo<Components>(
@@ -54,7 +58,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
     <div className={cn("markdown-body", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: true }]]}
+        rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: false }]]}
         components={components}
       >
         {content}

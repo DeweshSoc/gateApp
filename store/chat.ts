@@ -21,10 +21,16 @@ export const useChatStore = create<ChatState>((set) => ({
   isSidebarOpen: false,
   isLoadingConversations: false,
 
-  setConversations: (conversations) => set({ conversations }),
+  setConversations: (conversations) =>
+    // Drop any malformed rows (missing `id`); such a row would render a link
+    // to `/chat/undefined`. Protects against provider/API shape regressions.
+    set({ conversations: conversations.filter((c) => Boolean(c?.id)) }),
 
   upsertConversation: (conversation) =>
     set((state) => {
+      // Guard against malformed entries (e.g. a response shape mismatch that
+      // yields `id: undefined`). Such a row would link to `/chat/undefined`.
+      if (!conversation?.id) return {};
       const existing = state.conversations.findIndex((c) => c.id === conversation.id);
       if (existing === -1) {
         return { conversations: [conversation, ...state.conversations] };

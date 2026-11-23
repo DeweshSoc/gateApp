@@ -11,7 +11,7 @@ import type {
   MessageDTO,
   SubjectWithTopics,
 } from "@/types";
-import { apiFetch } from "@/lib/api-client";
+import { apiFetch, invalidateApiCache } from "@/lib/api-client";
 import { Header } from "@/components/layout/header";
 import { MessageList } from "./message-list";
 import { Composer } from "./composer";
@@ -66,11 +66,11 @@ export function ChatView({
     return () => abortRef.current?.abort();
   }, []);
 
-  const handleToggleImportant = (id: string, next: boolean) => {
+  const handleToggleImportant = React.useCallback((id: string, next: boolean) => {
     setMessages((prev) =>
       prev.map((m) => (m.id === id ? { ...m, isImportant: next } : m)),
     );
-  };
+  }, []);
 
   const handleStop = () => abortRef.current?.abort();
 
@@ -176,10 +176,18 @@ export function ChatView({
         // First message in a new chat: navigate to the persisted conversation.
         if (!conversationIdRef.current && newConversationId) {
           conversationIdRef.current = newConversationId;
-          const created = await apiFetch<ConversationDTO>(
-            `/api/conversations/${newConversationId}`,
-          ).catch(() => null);
-          if (created) upsertConversation(created);
+          // GET /api/conversations/[id] returns { conversation, messages } —
+          // unwrap `.conversation` so we don't upsert an object with no `id`.
+          const created = await apiFetch<{
+            conversation: ConversationDTO;
+            messages: MessageDTO[];
+          }>(`/api/conversations/${newConversationId}`, { noCache: true }).catch(
+            () => null,
+          );
+          if (created?.conversation) {
+            upsertConversation(created.conversation);
+          }
+          invalidateApiCache("/api/conversations");
           router.push(`/chat/${newConversationId}`);
           router.refresh();
         }

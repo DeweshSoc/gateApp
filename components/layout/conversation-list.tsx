@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { MessageSquare, MoreHorizontal, Pin, PinOff, Trash2, Pencil } from "lucide-react";
-import { apiFetch } from "@/lib/api-client";
+import { apiFetch, invalidateApiCache } from "@/lib/api-client";
 import { formatRelativeDate } from "@/lib/utils";
 import { useChatStore } from "@/store/chat";
 import type { ConversationDTO } from "@/types";
@@ -70,6 +70,7 @@ export function ConversationList({ onNavigate }: { onNavigate?: () => void }) {
   async function handleDelete(conversation: ConversationDTO) {
     try {
       await apiFetch(`/api/conversations/${conversation.id}`, { method: "DELETE" });
+      invalidateApiCache("/api/conversations");
       removeConversation(conversation.id);
       toast.success("Chat deleted.");
       if (activeId === conversation.id) router.push("/chat");
@@ -87,6 +88,7 @@ export function ConversationList({ onNavigate }: { onNavigate?: () => void }) {
           body: JSON.stringify({ isPinned: !conversation.isPinned }),
         },
       );
+      invalidateApiCache("/api/conversations");
       upsertConversation(updated);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update chat.");
@@ -102,6 +104,7 @@ export function ConversationList({ onNavigate }: { onNavigate?: () => void }) {
         `/api/conversations/${renaming.id}`,
         { method: "PATCH", body: JSON.stringify({ title }) },
       );
+      invalidateApiCache("/api/conversations");
       upsertConversation(updated);
       setRenaming(null);
       toast.success("Chat renamed.");
@@ -218,12 +221,19 @@ function ConversationRow({
   onTogglePin,
   onRename,
 }: RowProps) {
+  // Lazily mount the Radix dropdown only after the row is first hovered or
+  // focused. Rendering a full menu (popper, focus trap) per row is expensive
+  // when the sidebar holds up to 200 conversations.
+  const [menuReady, setMenuReady] = React.useState(false);
+
   return (
     <div
       className={cn(
         "group flex items-center gap-1 rounded-md pr-1 transition-colors",
         active ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60",
       )}
+      onMouseEnter={() => setMenuReady(true)}
+      onFocus={() => setMenuReady(true)}
     >
       <Link
         href={`/chat/${conversation.id}`}
@@ -241,34 +251,46 @@ function ConversationRow({
         </span>
       </Link>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
-            aria-label="Chat options"
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => onRename(conversation)}>
-            <Pencil /> Rename
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onTogglePin(conversation)}>
-            {conversation.isPinned ? <PinOff /> : <Pin />}
-            {conversation.isPinned ? "Unpin" : "Pin"}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="text-destructive focus:text-destructive"
-            onClick={() => onDelete(conversation)}
-          >
-            <Trash2 /> Delete
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {menuReady ? (
+        <DropdownMenu onOpenChange={(open) => open && setMenuReady(true)}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+              aria-label="Chat options"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => onRename(conversation)}>
+              <Pencil /> Rename
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onTogglePin(conversation)}>
+              {conversation.isPinned ? <PinOff /> : <Pin />}
+              {conversation.isPinned ? "Unpin" : "Pin"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => onDelete(conversation)}
+            >
+              <Trash2 /> Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="opacity-0"
+          aria-hidden="true"
+          tabIndex={-1}
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      )}
     </div>
   );
 }

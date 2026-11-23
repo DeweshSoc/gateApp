@@ -7,8 +7,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Keyword search across notes and messages. Uses a simple case-insensitive
- * regex so it works without a text index; results are capped.
+ * Full-text keyword search across notes and messages. Uses MongoDB `$text`
+ * indexes (Notes: title/content/tags; Messages: content) so the query is served
+ * by the index instead of scanning every document with an unanchored regex.
  */
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -18,15 +19,22 @@ export async function GET(request: Request): Promise<Response> {
 
     if (!q) return ok({ notes: [], messages: [] });
 
-    const regex = new RegExp(escapeRegex(q), "i");
     await connectToDatabase();
 
     const [notes, messages] = await Promise.all([
-      Note.find({ $or: [{ title: regex }, { content: regex }, { tags: regex }] })
+      Note.find(
+        { $text: { $search: q } },
+        { score: { $meta: "textScore" } },
+      )
+        .sort({ score: { $meta: "textScore" } })
         .limit(limit)
         .lean(),
-      Message.find({ content: regex })
+      Message.find(
+        { $text: { $search: q } },
+        { score: { $meta: "textScore" } },
+      )
         .select("conversationId role content createdAt")
+        .sort({ score: { $meta: "textScore" } })
         .limit(limit)
         .lean(),
     ]);
@@ -43,8 +51,4 @@ export async function GET(request: Request): Promise<Response> {
   } catch (error) {
     return handleError(error);
   }
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

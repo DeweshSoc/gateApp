@@ -16,7 +16,7 @@ import type {
   SubjectDTO,
 } from "@/types";
 import type { PyqWorkspaceData } from "@/lib/server/pyqs";
-import { apiFetch } from "@/lib/api-client";
+import { apiFetch, invalidateApiCache } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
 
 const ALL = "__all__";
+/** Number of question cards mounted initially and added per "load more" step. */
+const PAGE_SIZE = 30;
 
 type FilterKey = "all" | "unattempted" | "incorrect" | "bookmarked";
 
@@ -80,11 +82,32 @@ export function PyqWorkspace({ initial }: { initial: PyqWorkspaceData }) {
 
   const refreshQuestions = React.useCallback(async () => {
     try {
-      const data = await apiFetch<PyqDTO[]>("/api/pyqs");
+      const data = await apiFetch<PyqDTO[]>("/api/pyqs", { noCache: true });
       setQuestions(data);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to refresh questions.");
     }
+  }, []);
+
+  // Progressive rendering: mount the first PAGE_SIZE questions and grow the
+  // window as the user scrolls, so a large bank never mounts hundreds of
+  // Markdown-rendered cards at once.
+  const [visibleCount, setVisibleCount] = React.useState(PAGE_SIZE);
+  const sentinelRef = React.useRef<HTMLLIElement>(null);
+
+  React.useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleCount((c) => c + PAGE_SIZE);
+        }
+      },
+      { rootMargin: "400px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
   }, []);
 
   const submitAttempt = async (question: PyqDTO) => {
@@ -131,6 +154,7 @@ export function PyqWorkspace({ initial }: { initial: PyqWorkspaceData }) {
         method: "PATCH",
         body: JSON.stringify({ isBookmarked: next }),
       });
+      invalidateApiCache("/api/pyqs");
     } catch (error) {
       setQuestions((prev) =>
         prev.map((q) =>
@@ -219,7 +243,7 @@ export function PyqWorkspace({ initial }: { initial: PyqWorkspaceData }) {
         </div>
       ) : (
         <ul className="space-y-3">
-          {filtered.map((question, index) => (
+          {filtered.slice(0, visibleCount).map((question, index) => (
             <QuestionCard
               key={question.id}
               question={question}
@@ -236,6 +260,11 @@ export function PyqWorkspace({ initial }: { initial: PyqWorkspaceData }) {
               onToggleBookmark={() => toggleBookmark(question)}
             />
           ))}
+          {visibleCount < filtered.length && (
+            <li ref={sentinelRef} className="py-4 text-center text-xs text-muted-foreground">
+              Loading more…
+            </li>
+          )}
         </ul>
       )}
     </div>

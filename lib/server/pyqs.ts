@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { connectToDatabase } from "@/lib/db/client";
 import { Pyq, Subject } from "@/lib/db/models";
 import type { Difficulty, PyqDTO, SubjectDTO } from "@/types";
@@ -10,8 +11,10 @@ export interface PyqWorkspaceData {
 /**
  * Load the PYQ workspace (questions + subjects) for the server page. Returns
  * empty collections when the database is unavailable or not seeded.
+ *
+ * Wrapped in React `cache()` to dedupe repeated calls within a single render.
  */
-export async function loadPyqWorkspace(): Promise<PyqWorkspaceData> {
+export const loadPyqWorkspace = cache(async (): Promise<PyqWorkspaceData> => {
   try {
     await connectToDatabase();
     const [rows, subjects] = await Promise.all([
@@ -49,4 +52,4 @@ export async function loadPyqWorkspace(): Promise<PyqWorkspaceData> {
   } catch {
     return { questions: [], subjects: [] };
   }
-}
+});

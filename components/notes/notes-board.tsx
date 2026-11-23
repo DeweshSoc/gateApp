@@ -4,7 +4,7 @@ import * as React from "react";
 import { toast } from "sonner";
 import { Plus, Star, Trash2 } from "lucide-react";
 import type { NoteDTO } from "@/types";
-import { apiFetch } from "@/lib/api-client";
+import { apiFetch, invalidateApiCache } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -40,6 +40,7 @@ export function NotesBoard({ emptyState }: { emptyState: React.ReactNode }) {
         method: "POST",
         body: JSON.stringify({ title: title.trim(), content: content.trim() }),
       });
+      invalidateApiCache("/api/notes");
       setNotes((prev) => [note, ...prev]);
       setTitle("");
       setContent("");
@@ -55,6 +56,7 @@ export function NotesBoard({ emptyState }: { emptyState: React.ReactNode }) {
   const handleDelete = async (id: string) => {
     try {
       await apiFetch(`/api/notes/${id}`, { method: "DELETE" });
+      invalidateApiCache("/api/notes");
       setNotes((prev) => prev.filter((n) => n.id !== id));
       toast.success("Note deleted.");
     } catch (error) {
@@ -68,6 +70,7 @@ export function NotesBoard({ emptyState }: { emptyState: React.ReactNode }) {
         method: "PATCH",
         body: JSON.stringify({ isFavorite: !note.isFavorite }),
       });
+      invalidateApiCache("/api/notes");
       setNotes((prev) => prev.map((n) => (n.id === note.id ? updated : n)));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update note.");

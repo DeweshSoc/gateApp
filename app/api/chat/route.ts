@@ -35,11 +35,16 @@ export async function POST(request: Request): Promise<Response> {
     const input = parsed.data;
     await connectToDatabase();
 
-    // Resolve or create the conversation.
-    let conversation = input.conversationId
-      ? await Conversation.findById(input.conversationId)
-      : null;
+    // Resolve or create the conversation. Preferences are independent of the
+    // conversation, so fetch them in parallel with the lookup.
+    const [existing, preference] = await Promise.all([
+      input.conversationId
+        ? Conversation.findById(input.conversationId)
+        : Promise.resolve(null),
+      Preference.findOne({ userId: "singleton" }).lean(),
+    ]);
 
+    let conversation = existing;
     if (!conversation) {
       conversation = await Conversation.create({
         title: deriveTitle(input.message),
@@ -61,34 +66,54 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // Persist the user message.
-    const userMessage = await Message.create({
+    await Message.create({
       conversationId: conversation._id,
       role: "user",
       content: input.message,
       tokenCount: estimateTokens(input.message),
     });
 
-    // Load prior history (excluding the just-saved message is unnecessary; it is included).
-    const history = await Message.find({ conversationId: conversation._id })
-      .sort({ createdAt: 1 })
-      .lean();
-
-    // Resolve preferences + optional profile for the system prompt.
-    const preference = await Preference.findOne({ userId: "singleton" }).lean();
-    let profilePrompt: string | null = null;
+    const contextWindow = preference?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     const profileId = input.profileId ?? preference?.defaultProfileId ?? null;
-    if (profileId) {
-      const profile = await AiProfile.findById(profileId).lean();
-      if (profile) profilePrompt = profile.systemPrompt;
-    }
+    const subjectId = input.subjectId ?? conversation.subjectId ?? null;
+
+    // Fetch only what the context needs: the most recent `contextWindow`
+    // messages plus any flagged (important) messages. All reads run in
+    // parallel — history, profile, subject, and provider resolution.
+    type HistoryRow = {
+      _id: unknown;
+      role: string;
+      content: string;
+      isImportant?: boolean;
+      createdAt: Date;
+    };
+
+    const [recentDesc, important, profile, subject, resolved] = await Promise.all([
+      Message.find({ conversationId: conversation._id })
+        .sort({ createdAt: -1 })
+        .limit(contextWindow)
+        .lean<HistoryRow[]>(),
+      Message.find({ conversationId: conversation._id, isImportant: true })
+        .select("_id role content isImportant createdAt")
+        .lean<HistoryRow[]>(),
+      profileId ? AiProfile.findById(profileId).lean() : Promise.resolve(null),
+      subjectId ? Subject.findById(subjectId).lean() : Promise.resolve(null),
+      resolveProvider(input.providerId),
+    ]);
+
+    // Merge recent + important, dedupe by id, and order chronologically.
+    const byId = new Map<string, HistoryRow>();
+    for (const m of recentDesc) byId.set(String(m._id), m);
+    for (const m of important) byId.set(String(m._id), m);
+    const history = Array.from(byId.values()).sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+    );
+
+    const profilePrompt: string | null = profile?.systemPrompt ?? null;
 
     let subjectContext = "";
-    const subjectId = input.subjectId ?? conversation.subjectId ?? null;
-    if (subjectId) {
-      const subject = await Subject.findById(subjectId).lean();
-      if (subject) {
-        subjectContext = `The student is currently studying ${subject.name} (${subject.code}). Focus your answer on this subject area.`;
-      }
+    if (subject) {
+      subjectContext = `The student is currently studying ${subject.name} (${subject.code}). Focus your answer on this subject area.`;
     }
 
     const systemPrompt = composeSystemPrompt({
@@ -107,18 +132,17 @@ export async function POST(request: Request): Promise<Response> {
         isImportant: m.isImportant,
       })),
       summary: conversation.summary ?? null,
-      contextWindow: preference?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+      contextWindow,
     });
 
-    // Resolve provider and start streaming.
-    const { provider, config } = await resolveProvider(input.providerId);
+    // Start streaming with the already-resolved provider.
     const controller = new AbortController();
     request.signal.addEventListener("abort", () => controller.abort());
 
-    const sourceStream = await provider.chatStream(contextMessages, {
-      model: config.model,
-      temperature: config.temperature,
-      maxTokens: config.maxTokens,
+    const sourceStream = await resolved.provider.chatStream(contextMessages, {
+      model: resolved.config.model,
+      temperature: resolved.config.temperature,
+      maxTokens: resolved.config.maxTokens,
       signal: controller.signal,
     });
 

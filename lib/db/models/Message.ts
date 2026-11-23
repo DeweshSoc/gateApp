@@ -20,6 +20,7 @@ const messageSchema = new Schema(
 );
 
 messageSchema.index({ conversationId: 1, createdAt: 1 });
+messageSchema.index({ content: "text" });
 
 export type MessageDoc = InferSchemaType<typeof messageSchema>;
 

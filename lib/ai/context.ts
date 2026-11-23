@@ -14,7 +14,8 @@ interface MessageLike {
  * - rolling summary if older messages were compacted,
  * - the last N messages.
  *
- * Never sends the full history blindly.
+ * Never sends the full history blindly. Linear in `history.length`: the set of
+ * retained indices is computed in a single pass (no nested `includes` scans).
  */
 export function buildActiveContext(options: {
   systemPrompt: string;
@@ -29,16 +30,23 @@ export function buildActiveContext(options: {
     { role: "system", content: systemPrompt },
   ];
 
-  const important = history.filter((m) => m.isImportant);
-  const recent = history.slice(-window);
+  const recentStart = Math.max(0, history.length - window);
 
-  // Union of important + recent, preserving chronological order.
+  // Single pass: mark indices that are important or within the recent window.
+  const selected = new Set<number>();
+  for (let i = 0; i < history.length; i += 1) {
+    const m = history[i];
+    if (!m) continue;
+    if (m.isImportant || i >= recentStart) selected.add(i);
+  }
+
+  // Second pass in chronological order, deduping by role+content.
   const seen = new Set<string>();
   const merged: MessageLike[] = [];
-  for (const m of history) {
-    const isImportant = important.includes(m);
-    const isRecent = recent.includes(m);
-    if (!isImportant && !isRecent) continue;
+  for (let i = 0; i < history.length; i += 1) {
+    if (!selected.has(i)) continue;
+    const m = history[i];
+    if (!m) continue;
     const key = `${m.role}:${m.content}`;
     if (seen.has(key)) continue;
     seen.add(key);
