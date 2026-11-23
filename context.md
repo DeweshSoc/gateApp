@@ -101,7 +101,7 @@ GATE_APP/
 │   ├── server/                    # server data loaders: conversations, subjects, profiles, pyqs
 │   ├── validation/schemas.ts      # Zod schemas
 │   ├── api.ts                     # SERVER response helpers: ok/fail/handleError/readJson
-│   ├── api-client.ts              # CLIENT typed fetch wrapper: apiFetch/jsonBody
+│   ├── api-client.ts              # CLIENT typed fetch wrapper: apiFetch + dedup/2s cache/invalidateApiCache + jsonBody
 │   ├── crypto.ts                  # AES-256-GCM encrypt/decrypt/maskKey
 │   ├── serialize.ts               # Mongoose doc → DTO mappers
 │   ├── utils.ts                   # cn, dates, truncate, deriveTitle, slugify, errorMessage
@@ -132,7 +132,7 @@ multi-user. All schemas use `timestamps: true`.
 | `subjects` | `slug` (unique), `name`, `code`, `color` (#3b82f6), `description`, `order` | `slug` unique |
 | `topics` | `subjectId` (ref Subject), `name`, `slug`, `order` | unique `(subjectId, slug)` |
 | `conversations` | `title`, `subjectId?`, `topicId?`, `isPinned`, `isArchived`, `summary`, `importantExcerpts[]`, `messageCount`, `lastMessageAt` | index `(isArchived, lastMessageAt)` |
-| `messages` | `conversationId` (ref), `role` (`user`\|`assistant`\|`system`), `content`, `summary?`, `isImportant`, `tokenCount` | index `(conversationId, createdAt)`; **no attachments** |
+| `messages` | `conversationId` (ref), `role` (`user`\|`assistant`\|`system`), `content`, `summary?`, `isImportant`, `tokenCount` | index `(conversationId, createdAt)`; **text index on `content`**; **no attachments** |
 | `notes` | `title`, `content`, `subjectId?`, `topicId?`, `tags[]`, `importance` (`low`\|`medium`\|`high`), `isFavorite`, `sourceMessageId?` | text index on title/content/tags |
 | `aiproviders` | `name`, `baseUrl`, `apiKeyEncrypted`, `model`, `temperature`, `maxTokens`, `isActive` | key encrypted at rest |
 | `aiprofiles` | `name`, `slug` (unique), `description`, `systemPrompt`, `temperature`, `isDefault` | `slug` unique |
@@ -165,9 +165,12 @@ multi-user. All schemas use `timestamps: true`.
   (or `DEFAULT_SYSTEM_PROMPT`) + custom instructions + response-style hint.
 - **Context builder** ([`lib/ai/context.ts`](lib/ai/context.ts)):
   `buildActiveContext()` = system prompt → important (flagged) messages → rolling summary
-  → last N messages (deduped, chronological). `estimateTokens()` ≈ `ceil(len/4)`.
+  → last N messages (deduped, chronological). Selection is a **linear two-pass** algorithm
+  (an index `Set` marks important + recent-window entries, then one pass builds the
+  deduped, chronological list — no O(n²) `includes` scans). `estimateTokens()` ≈ `ceil(len/4)`.
 - **Streaming** ([`lib/ai/stream.ts`](lib/ai/stream.ts)): `toSSEStream()` frames text
   chunks as `data: {json}\n\n` with a final `data: [DONE]`; `SSE_HEADERS` exported.
+  Deltas are **batched** (default 24 ms flush) to reduce per-token frame overhead.
 
 ### Error model
 `AiProviderError(code, message, status?, retryAfter?)` with codes: `TIMEOUT` (504),
@@ -202,7 +205,7 @@ All routes set `export const runtime = "nodejs"` and `dynamic = "force-dynamic"`
 | `/api/progress` | GET, POST | POST upserts by subjectId or topicId |
 | `/api/subjects` | GET | sorted by order/name |
 | `/api/topics` | GET | filter `?subjectId=` |
-| `/api/search` | GET | keyword regex over **notes + messages** (see §10) |
+| `/api/search` | GET | MongoDB `$text` search over **notes + messages**, `textScore`-ranked |
 | `/api/health` | GET | DB connectivity + timestamp |
 
 ### Chat request flow (POST `/api/chat`)
@@ -229,7 +232,22 @@ All routes set `export const runtime = "nodejs"` and `dynamic = "force-dynamic"`
   user message → `fetch("/api/chat")` → reads SSE frames → accumulates `streamingContent`
   → appends assistant message on completion. First message in a new chat navigates to
   `/chat/{id}` using the `x-conversation-id` header. Supports abort (stop) and preserves
-  partial output on error/abort.
+  partial output on error/abort. After creating a chat it re-reads
+  `GET /api/conversations/{id}` and **unwraps `.conversation`** (the route returns
+  `{ conversation, messages }`), then invalidates the `/api/conversations` cache — this
+  fixed the `/chat/undefined` 404 regression (see §10).
+- **Message list** ([`components/chat/message-list.tsx`](components/chat/message-list.tsx)):
+  message rows are `React.memo`-ized and the streaming bubble re-parses Markdown on a
+  ~100 ms throttle, so a token flood does not trigger full-list re-renders or
+  per-token Markdown/KaTeX/highlight work.
+- **Conversation list** ([`components/layout/conversation-list.tsx`](components/layout/conversation-list.tsx)):
+  dropdown menus are lazily mounted on hover/focus; create/delete/pin/rename mutations
+  invalidate the `/api/conversations` client cache.
+- **PYQ workspace** ([`components/pyq/pyq-workspace.tsx`](components/pyq/pyq-workspace.tsx)):
+  progressively renders a window of questions via `IntersectionObserver` (page size 30).
+- **Client API wrapper** ([`lib/api-client.ts`](lib/api-client.ts)): `apiFetch` dedupes
+  in-flight GETs and caches results for 2 s (bypassable via `{ noCache: true }` / `ttl`);
+  `invalidateApiCache(prefix?)` clears matching entries.
 - **Context bar** ([`components/chat/chat-context-bar.tsx`](components/chat/chat-context-bar.tsx)):
   optional subject / topic / profile pickers (pills). Topic list is filtered by selected
   subject. Radix Select uses `"__none__"` sentinel (empty string values are forbidden).
@@ -261,9 +279,40 @@ Ciphertext format: `v1:<ivHex>:<authTagHex>:<ciphertextHex>`.
 
 - **Built & verified:** foundation, data layer, AI layer, full UI shell, chat with SSE,
   notes board, PYQ workspace, subjects grid, settings, seed. `tsc --noEmit` exits 0.
+  `pnpm build` passes (see performance note below).
 - **Attachment removal (2026-11-21):** chat-only v1. `pdf-parse`, `Document` model,
   upload routes, `storage/` handling, and upload constants were removed. `summary` fields
   on Message/Conversation remain (they are rolling-summary context, not attachments).
+
+- **Performance audit & fixes (2026-11-23, all applied + typechecked):**
+  - `buildActiveContext()` made linear (was O(n²)).
+  - Chat route limits history fetch to context window + important messages, and
+    parallelizes DB reads.
+  - Message rows memoized; streaming bubble throttled; scroll no longer fires per token.
+  - `rehype-highlight` `detect: false` (skips per-block auto-detection).
+  - Server loaders (`subjects`, `profiles`, `pyqs`) wrapped in React `cache()`.
+  - Search switched from regex to MongoDB `$text` (added text index on `Message.content`).
+  - SSE deltas batched server-side.
+  - `apiFetch` gained in-flight dedup + 2 s TTL cache + `invalidateApiCache`.
+  - PYQ list progressively rendered; conversation dropdowns lazily mounted.
+  - `handleToggleImportant` memoized to preserve row memoization.
+
+- **Bug fix (2026-11-23): `/chat/undefined` 404.** Root cause: after creating a chat,
+  `ChatView` typed `GET /api/conversations/{id}` as a bare `ConversationDTO` but the
+  route returns `{ conversation, messages }`, so `created.id` was `undefined` and a
+  phantom store row rendered `/chat/undefined`. Fixed by unwrapping `.conversation` and
+  guarding `upsertConversation`/`setConversations` against missing `id`. `tsc --noEmit`
+  exits 0.
+
+- **Initial-load investigation (2026-11-23):** warm `GET /chat` renders in **~65 ms**
+  (loaders ~27 ms query on local MongoDB; `loadSubjectsWithTopics` + `loadProfiles`
+  shared via `cache()`). The observed ~7 s first-hit is `next dev` compilation of the
+  ~1998-module Markdown/KaTeX/highlight.js graph, not app logic. Production build ships
+  `/chat` at **347 kB First Load JS** (vs 102 kB shared) — the markdown+math+highlight
+  graph is statically imported by `ChatView`. KaTeX CSS (~24 kB) is also in the root
+  layout and thus on every route. **Known optimization (not yet applied):** lazy-load
+  `MarkdownRenderer` via `next/dynamic`, trim `rehype-highlight` to an explicit language
+  subset, and scope `katex.min.css` to chat/PYQ routes.
 - **Deferred to v2 (do not start without explicit request):**
   - Document uploads (`Document` model, upload route, `pdf-parse`/OCR, file storage, UI).
   - Auth / multi-user.
